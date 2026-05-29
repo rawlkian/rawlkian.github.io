@@ -943,7 +943,7 @@ html[data-theme="default"] .memo-editor-content {
             align-items: center !important;
         }
 
-        /* 通用下拉气泡菜单样式 */
+        /* 通用下拉气泡菜单样式 (由 hidden 改造为 visible 从而完美外溢渲染子菜单) */
         .custom-md-dropdown-menu {
             display: none;
             flex-direction: column;
@@ -955,7 +955,28 @@ html[data-theme="default"] .memo-editor-content {
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
             z-index: 9999 !important;
             min-width: 110px !important;
-            overflow: hidden !important;
+            overflow: visible; /* 必须为 visible 以免裁切折叠菜单中的二级子菜单 */
+        }
+
+        /* 极简圆角强制覆盖 (由于取消了 overflow: hidden, 必须手动拟合首尾子项的圆角) */
+        .custom-md-dropdown-menu > *:first-child,
+        .custom-md-dropdown-menu > .custom-md-dropdown-container:first-child > .custom-md-btn {
+            border-top-left-radius: 5px !important;
+            border-top-right-radius: 5px !important;
+        }
+        .custom-md-dropdown-menu > *:last-child,
+        .custom-md-dropdown-menu > .custom-md-dropdown-container:last-child > .custom-md-btn {
+            border-bottom-left-radius: 5px !important;
+            border-bottom-right-radius: 5px !important;
+            border-bottom: none !important;
+        }
+        .custom-md-dropdown-item:first-child {
+            border-top-left-radius: 5px !important;
+            border-top-right-radius: 5px !important;
+        }
+        .custom-md-dropdown-item:last-child {
+            border-bottom-left-radius: 5px !important;
+            border-bottom-right-radius: 5px !important;
         }
 
         /* 气泡菜单内部按钮项样式 */
@@ -1024,6 +1045,11 @@ html[data-theme="default"] .memo-editor-content {
             flex-shrink: 0 !important;
         }
 
+        /* 嵌套子菜单横向溢出定位调整 (移除 left/right 的写死规则，交由 JS 精准判定) */
+        .custom-md-more-dropdown-menu .custom-md-dropdown-menu {
+            transform: none !important;
+        }
+
         /* 原生暗色主题深度融合兼容 */
         @media (prefers-color-scheme: dark) {
             .custom-md-dropdown-menu {
@@ -1045,9 +1071,14 @@ html[data-theme="default"] .memo-editor-content {
     `;
     document.head.appendChild(style);
 
-    // 3. 边界自适应碰撞定位算法 (Auto up/down/left/right)
+    // 3. 边界自适应碰撞定位算法 (具有极致空间判定和最大高度限制滚动fallback)
     function positionDropdown(menu, button) {
         menu.style.display = 'flex'; // 先显示以便获得高宽
+        
+        // 每次重新定位前重置可能发生变化的高度和滚动限制
+        menu.style.maxHeight = 'none';
+        menu.style.overflowY = 'visible';
+
         const buttonRect = button.getBoundingClientRect();
         const menuHeight = menu.offsetHeight || 150;
         const menuWidth = menu.offsetWidth || 120;
@@ -1060,26 +1091,85 @@ html[data-theme="default"] .memo-editor-content {
         menu.style.left = 'auto';
         menu.style.right = 'auto';
         menu.style.transform = 'none';
+        menu.style.marginLeft = '0px';
+        menu.style.marginRight = '0px';
 
-        // 垂直定位：优先向上弹出，若上方空间不足则向下
         const spacing = 6;
-        if (buttonRect.top > menuHeight + spacing) {
-            menu.style.bottom = `${button.offsetHeight + spacing}px`;
-        } else if (viewportHeight - buttonRect.bottom > menuHeight + spacing) {
-            menu.style.top = `${button.offsetHeight + spacing}px`;
-        } else {
-            menu.style.bottom = `${button.offsetHeight + spacing}px`; // 回退默认
-        }
+        const spaceAbove = buttonRect.top - spacing;
+        const spaceBelow = viewportHeight - buttonRect.bottom - spacing;
 
-        // 水平定位：防止左右两侧溢出屏幕被裁切
-        const buttonCenter = buttonRect.left + buttonRect.width / 2;
-        if (buttonCenter - menuWidth / 2 < 12) {
-            menu.style.left = '0px';
-        } else if (buttonCenter + menuWidth / 2 > viewportWidth - 12) {
-            menu.style.right = '0px';
+        const isNested = !!button.closest('.custom-md-more-dropdown-menu');
+
+        if (isNested) {
+            // 【嵌套子菜单横向溢出检测与避让】
+            const spaceRight = viewportWidth - buttonRect.right;
+            const spaceLeft = buttonRect.left;
+            
+            // 如果右侧放得下，或者右侧空间比左侧大，则优先向右展开；否则向左展开
+            if (spaceRight >= menuWidth || spaceRight > spaceLeft) {
+                menu.style.left = '100%';
+                menu.style.right = 'auto';
+                menu.style.marginLeft = '4px';
+            } else {
+                menu.style.right = '100%';
+                menu.style.left = 'auto';
+                menu.style.marginRight = '4px';
+            }
+
+            // 【嵌套子菜单纵向对齐与滚动避让】
+            if (viewportHeight - buttonRect.top >= menuHeight) {
+                menu.style.top = '0px';
+                menu.style.bottom = 'auto';
+            } else {
+                // 如果下方放不下，向上对齐，并检测上方空间是否足够，不够则开启滚动限流
+                if (buttonRect.bottom >= menuHeight) {
+                    menu.style.bottom = '0px';
+                    menu.style.top = 'auto';
+                } else {
+                    // 上下都放不下，选择空间较大的一侧限高并启用滚动条
+                    if (spaceBelow > spaceAbove) {
+                        menu.style.top = '0px';
+                        menu.style.bottom = 'auto';
+                        menu.style.maxHeight = `${Math.max(80, spaceBelow - 10)}px`;
+                        menu.style.overflowY = 'auto';
+                    } else {
+                        menu.style.bottom = '0px';
+                        menu.style.top = 'auto';
+                        menu.style.maxHeight = `${Math.max(80, spaceAbove - 10)}px`;
+                        menu.style.overflowY = 'auto';
+                    }
+                }
+            }
         } else {
-            menu.style.left = '50%';
-            menu.style.transform = 'translateX(-50%)';
+            // 【非嵌套常规主菜单定位】
+            // 垂直定位：优先向上弹出，若上方空间不足则向下
+            if (spaceAbove >= menuHeight) {
+                menu.style.bottom = `${button.offsetHeight + spacing}px`;
+            } else if (spaceBelow >= menuHeight) {
+                menu.style.top = `${button.offsetHeight + spacing}px`;
+            } else {
+                // 两边均放不下 (移动端软键盘弹出)，选择空余空间更大的一侧并施加 maxHeight 滚动条限制
+                if (spaceAbove >= spaceBelow) {
+                    menu.style.bottom = `${button.offsetHeight + spacing}px`;
+                    menu.style.maxHeight = `${Math.max(60, spaceAbove - 10)}px`;
+                    menu.style.overflowY = 'auto';
+                } else {
+                    menu.style.top = `${button.offsetHeight + spacing}px`;
+                    menu.style.maxHeight = `${Math.max(60, spaceBelow - 10)}px`;
+                    menu.style.overflowY = 'auto';
+                }
+            }
+
+            // 水平定位：防止左右两侧溢出屏幕被裁切
+            const buttonCenter = buttonRect.left + buttonRect.width / 2;
+            if (buttonCenter - menuWidth / 2 < 12) {
+                menu.style.left = '0px';
+            } else if (buttonCenter + menuWidth / 2 > viewportWidth - 12) {
+                menu.style.right = '0px';
+            } else {
+                menu.style.left = '50%';
+                menu.style.transform = 'translateX(-50%)';
+            }
         }
     }
 
@@ -1156,7 +1246,7 @@ html[data-theme="default"] .memo-editor-content {
         const parentContainer = plusButton.parentElement;
         if (!parentContainer) return;
 
-        // 【核心修正】向上寻找承载左侧（+按钮与工具栏）和右侧（可见性与保存）的最外层主双栏容器
+        // 向上寻找承载左侧（+按钮与工具栏）和右侧（可见性与保存）的最外层主双栏容器
         const rowContainer = plusButton.closest('.justify-between') || 
                              (plusButton.parentElement ? plusButton.parentElement.parentElement : null) || 
                              parentContainer;
@@ -1309,14 +1399,15 @@ html[data-theme="default"] .memo-editor-content {
             tools.forEach((tool) => {
                 let element;
                 if (tool.isDropdown) {
-                    // 构造标题下拉组件
+                    // 构造标题/高亮下拉组件
                     const container = document.createElement('div');
                     container.className = 'custom-md-dropdown-container';
 
                     const mainBtn = document.createElement('button');
                     mainBtn.type = 'button';
                     mainBtn.className = 'custom-md-btn';
-                    mainBtn.innerHTML = tool.icon;
+                    // 为Dropdown主按钮追加文本标签，使其在被折叠入“更多”时拥有完美的文字注释说明
+                    mainBtn.innerHTML = `${tool.icon} <span class="custom-btn-text-label">${tool.label}</span>`;
                     mainBtn.title = tool.title;
 
                     const menu = document.createElement('div');
@@ -1344,7 +1435,15 @@ html[data-theme="default"] .memo-editor-content {
                             e.preventDefault();
                             e.stopPropagation();
                             insertMarkdown(plusButton, item.before, item.after);
+                            
+                            // 关闭子菜单
                             menu.style.display = 'none';
+
+                            // 如果处于折叠区，点击插入后自动连带闭合外层的「更多」下拉菜单，提升移动端用户体验
+                            const parentMore = itemBtn.closest('.custom-md-more-dropdown-menu');
+                            if (parentMore) {
+                                parentMore.style.display = 'none';
+                            }
                         });
                         menu.appendChild(itemBtn);
                     });
@@ -1354,7 +1453,7 @@ html[data-theme="default"] .memo-editor-content {
                         e.stopPropagation();
                         
                         document.querySelectorAll('.custom-md-dropdown-menu').forEach(m => {
-                            if (m !== menu) m.style.display = 'none';
+                            if (m !== menu && m !== moreDropdown) m.style.display = 'none';
                         });
 
                         const isShown = (menu.style.display === 'flex');
